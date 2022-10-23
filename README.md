@@ -1,5 +1,5 @@
 # NESosi
-NESosi - (NES operation system input) is NES emulator. It made just for fun and doesn't works. I trying to make that just for understanding of that videos:
+NESosi - (NES operation system interpretator) is NES emulator. It made just for fun and doesn't works. I trying to make that just for understanding of that videos:
 https://www.youtube.com/watch?v=xdzOvpYPmGE&list=PLrOv9FMX8xJHqMvSGB_9G9nZZ_4IgteYf&index=4
 
 So I have to mark the author of original workable code and add his License information
