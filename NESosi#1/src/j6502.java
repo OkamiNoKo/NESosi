@@ -154,7 +154,7 @@ public class j6502 {
     // a utility function to enable "step-by-step" execution, without manually
     // clocking every cycle
     public boolean complete(){
-
+        return cycles == 0;
     }
 
     // Link this CPU to a communications bus
@@ -163,7 +163,123 @@ public class j6502 {
     // Produces a map of strings, with keys equivalent to instruction start locations
     // in memory, for the specified address range
     private final Map<char, String> disassemble(char nStart, char nStop) {
-        return null;
+        int addr = nStart;
+        byte value = 0x00, lo = 0x00, hi = 0x00;
+        Map<char, String> mapLines;
+        uint16_t line_addr = 0;
+
+        // A convenient utility to convert variables into
+        // hex strings because "modern C++"'s method with
+        // streams is atrocious
+        auto hex = [](int n, byte d)
+        {
+            String s(d, '0');
+            for (int i = d - 1; i >= 0; i--, n >>= 4)
+                s[i] = "0123456789ABCDEF"[n & 0xF];
+            return s;
+        };
+
+        // Starting at the specified address we read an instruction
+        // byte, which in turn yields information from the lookup table
+        // as to how many additional bytes we need to read and what the
+        // addressing mode is. I need this info to assemble human readable
+        // syntax, which is different depending upon the addressing mode
+
+        // As the instruction is decoded, a std::string is assembled
+        // with the readable output
+        while (addr <= (uint32_t)nStop)
+        {
+            line_addr = addr;
+
+            // Prefix line with instruction address
+            String sInst = "$" + hex(addr, 4) + ": ";
+
+            // Read instruction, and get its readable name
+            byte opcode = bus->read(addr, true); addr++;
+            sInst += lookup[opcode].name + " ";
+
+            // Get oprands from desired locations, and form the
+            // instruction based upon its addressing mode. These
+            // routines mimmick the actual fetch routine of the
+            // 6502 in order to get accurate data as part of the
+            // instruction
+            if (lookup[opcode].addrmode == mode.IMP)
+            {
+                sInst += " {IMP}";
+            }
+            else if (lookup[opcode].addrmode == mode.IMM)
+            {
+                value = bus->read(addr, true); addr++;
+                sInst += "#$" + hex(value, 2) + " {IMM}";
+            }
+            else if (lookup[opcode].addrmode == mode.ZP0)
+            {
+                lo = bus->read(addr, true); addr++;
+                hi = 0x00;
+                sInst += "$" + hex(lo, 2) + " {ZP0}";
+            }
+            else if (lookup[opcode].addrmode == mode.ZPX)
+            {
+                lo = bus->read(addr, true); addr++;
+                hi = 0x00;
+                sInst += "$" + hex(lo, 2) + ", X {ZPX}";
+            }
+            else if (lookup[opcode].addrmode == mode.ZPY)
+            {
+                lo = bus->read(addr, true); addr++;
+                hi = 0x00;
+                sInst += "$" + hex(lo, 2) + ", Y {ZPY}";
+            }
+            else if (lookup[opcode].addrmode == mode.IZX)
+            {
+                lo = bus->read(addr, true); addr++;
+                hi = 0x00;
+                sInst += "($" + hex(lo, 2) + ", X) {IZX}";
+            }
+            else if (lookup[opcode].addrmode == mode.IZY)
+            {
+                lo = bus->read(addr, true); addr++;
+                hi = 0x00;
+                sInst += "($" + hex(lo, 2) + "), Y {IZY}";
+            }
+            else if (lookup[opcode].addrmode == mode.ABS)
+            {
+                lo = bus->read(addr, true); addr++;
+                hi = bus->read(addr, true); addr++;
+                sInst += "$" + hex((uint16_t)(hi << 8) | lo, 4) + " {ABS}";
+            }
+            else if (lookup[opcode].addrmode == mode.ABX)
+            {
+                lo = bus->read(addr, true); addr++;
+                hi = bus->read(addr, true); addr++;
+                sInst += "$" + hex((uint16_t)(hi << 8) | lo, 4) + ", X {ABX}";
+            }
+            else if (lookup[opcode].addrmode == mode.ABY)
+            {
+                lo = bus->read(addr, true); addr++;
+                hi = bus->read(addr, true); addr++;
+                sInst += "$" + hex((uint16_t)(hi << 8) | lo, 4) + ", Y {ABY}";
+            }
+            else if (lookup[opcode].addrmode == mode.IND)
+            {
+                lo = bus->read(addr, true); addr++;
+                hi = bus->read(addr, true); addr++;
+                sInst += "($" + hex((uint16_t)(hi << 8) | lo, 4) + ") {IND}";
+            }
+            else if (lookup[opcode].addrmode == mode.REL)
+            {
+                value = bus->read(addr, true); addr++;
+                sInst += "$" + hex(value, 2) + " [$" + hex(addr + value, 4) + "] {REL}";
+            }
+
+            // Add the formed string to a std::map, using the instruction's
+            // address as the key. This makes it convenient to look for later
+            // as the instructions are variable in length, so a straight up
+            // incremental index is not sufficient.
+            mapLines[line_addr] = sInst;
+        }
+
+        return mapLines;
     }
 
     // The status register stores 8 flags. Ive enumerated these here for ease
@@ -951,36 +1067,307 @@ public class j6502 {
         SetFlag(FLAGS6502.N, ((a & 0x80) == 0) ? false : true);
         return 1;
     }
-    private byte LDX();
-    private byte LDY();
-    private byte LSR();
-    private byte NOP();
-    private byte ORA();
-    private byte PHA();
-    private byte PHP();
-    private byte PLA();
-    private byte PLP();
-    private byte ROL();
-    private byte ROR();
-    private byte RTI();
-    private byte RTS();
-    private byte SBC();
-    private byte SEC();
-    private byte SED();
-    private byte SEI();
-    private byte STA();
-    private byte STX();
-    private byte STY();
-    private byte TAX();
-    private byte TAY();
-    private byte TSX();
-    private byte TXA();
-    private byte TXS();
-    private byte TYA();
+
+    // Instruction: Load The X Register
+// Function:    X = M
+// Flags Out:   N, Z
+    private byte LDX(){
+        fetch();
+        x = fetched;
+        SetFlag(FLAGS6502.Z, x == 0x00);
+        SetFlag(FLAGS6502.N, ((x & 0x80) == 0) ? false : true);
+        return 1;
+    }
+
+
+    // Instruction: Load The Y Register
+// Function:    Y = M
+// Flags Out:   N, Z
+    private byte LDY(){
+        fetch();
+        y = fetched;
+        SetFlag(FLAGS6502.Z, y == 0x00);
+        SetFlag(FLAGS6502.N, ((y & 0x80) == 0) ? false : true);
+        return 1;
+    }
+
+    private byte LSR(){
+        fetch();
+        SetFlag(FLAGS6502.C, ((fetched & 0x0001) == 0) ? false : true);
+        temp = (char)(fetched >> 1);
+        SetFlag(FLAGS6502.Z, (temp & 0x00FF) == 0x0000);
+        SetFlag(FLAGS6502.N, ((temp & 0x0080) == 0) ? false : true);
+        if (lookup[opcode].addrmode == mode.IMP)
+            a = (byte)(temp & 0x00FF);
+        else
+            write(addr_abs, (byte)(temp & 0x00FF));
+        return 0;
+    }
+
+    private byte NOP(){
+        // Sadly not all NOPs are equal, Ive added a few here
+        // based on https://wiki.nesdev.com/w/index.php/CPU_unofficial_opcodes
+        // and will add more based on game compatibility, and ultimately
+        // I'd like to cover all illegal opcodes too
+        switch (opcode) {
+            case (byte)0x1C:
+            case (byte)0x3C:
+            case (byte)0x5C:
+            case (byte)0x7C:
+            case (byte)0xDC:
+            case (byte)0xFC:
+                return 1;
+            default: break;
+        }
+        return 0;
+    }
+
+    // Instruction: Bitwise Logic OR
+// Function:    A = A | M
+// Flags Out:   N, Z
+    private byte ORA(){
+        fetch();
+        a = (byte)(a | fetched);
+        SetFlag(FLAGS6502.Z, a == 0x00);
+        SetFlag(FLAGS6502.N, ((a & 0x80) == 0) ? false : true);
+        return 1;
+    }
+
+    // Instruction: Push Accumulator to Stack
+// Function:    A -> stack
+    private byte PHA(){
+        write((char) (0x0100 + stkp), a);
+        stkp--;
+        return 0;
+    }
+
+    // Instruction: Push Status Register to Stack
+// Function:    status -> stack
+// Note:        Break flag is set to 1 before push
+    private byte PHP(){
+        write((char) (0x0100 + stkp), (byte)(status | FLAGS6502.B.getBit_val() | FLAGS6502.U.getBit_val()));
+        SetFlag(FLAGS6502.B, false);
+        SetFlag(FLAGS6502.U, false);
+        stkp--;
+        return 0;
+    }
+
+    // Instruction: Pop Accumulator off Stack
+// Function:    A <- stack
+// Flags Out:   N, Z
+    private byte PLA(){
+        stkp++;
+        a = read((char)(0x0100 + stkp));
+        SetFlag(FLAGS6502.Z, a == 0x00);
+        SetFlag(FLAGS6502.N, ((a & 0x80) == 0) ? false : true);
+        return 0;
+    }
+
+    // Instruction: Pop Status Register off Stack
+// Function:    Status <- stack
+    private byte PLP(){
+        stkp++;
+        status = read((char) (0x0100 + stkp));
+        SetFlag(FLAGS6502.U, true);
+        return 0;
+    }
+
+    private byte ROL(){
+        fetch();
+        temp = (char) ((char)(fetched << 1) | GetFlag(FLAGS6502.C));
+        SetFlag(FLAGS6502.C, ((temp & 0xFF00) == 0) ? false : true);
+        SetFlag(FLAGS6502.Z, (temp & 0x00FF) == 0x0000);
+        SetFlag(FLAGS6502.N, ((temp & 0x0080) == 0) ? false : true);
+        if (lookup[opcode].addrmode == mode.IMP)
+            a = (byte) (temp & 0x00FF);
+        else
+            write(addr_abs, (byte) (temp & 0x00FF));
+        return 0;
+    }
+
+    private byte ROR(){
+        fetch();
+        temp = (char) ((char)(GetFlag(FLAGS6502.C) << 7) | (fetched >> 1));
+        SetFlag(FLAGS6502.C, ((fetched & 0x01) == 0) ? false : true);
+        SetFlag(FLAGS6502.Z, (temp & 0x00FF) == 0x00);
+        SetFlag(FLAGS6502.N, ((temp & 0x0080) == 0) ? false : true);
+        if (lookup[opcode].addrmode == mode.IMP)
+            a = (byte) (temp & 0x00FF);
+        else
+            write(addr_abs, (byte) (temp & 0x00FF));
+        return 0;
+    }
+
+    private byte RTI(){
+        stkp++;
+        status = read((char) (0x0100 + stkp));
+        status &= ~FLAGS6502.B.getBit_val();
+        status &= ~FLAGS6502.U.getBit_val();
+
+        stkp++;
+        pc = (char)read((char)(0x0100 + stkp));
+        stkp++;
+        pc |= (char)read((char)(0x0100 + stkp)) << 8;
+        return 0;
+    }
+
+    private byte RTS(){
+        stkp++;
+        pc = (char)read((char)(0x0100 + stkp));
+        stkp++;
+        pc |= (char)read((char)(0x0100 + stkp)) << 8;
+
+        pc++;
+        return 0;
+    }
+
+    // Instruction: Subtraction with Borrow In
+// Function:    A = A - M - (1 - C)
+// Flags Out:   C, V, N, Z
+//
+// Explanation:
+// Given the explanation for ADC above, we can reorganise our data
+// to use the same computation for addition, for subtraction by multiplying
+// the data by -1, i.e. make it negative
+//
+// A = A - M - (1 - C)  ->  A = A + -1 * (M - (1 - C))  ->  A = A + (-M + 1 + C)
+//
+// To make a signed positive number negative, we can invert the bits and add 1
+// (OK, I lied, a little bit of 1 and 2s complement :P)
+//
+//  5 = 00000101
+// -5 = 11111010 + 00000001 = 11111011 (or 251 in our 0 to 255 range)
+//
+// The range is actually unimportant, because if I take the value 15, and add 251
+// to it, given we wrap around at 256, the result is 10, so it has effectively
+// subtracted 5, which was the original intention. (15 + 251) % 256 = 10
+//
+// Note that the equation above used (1-C), but this got converted to + 1 + C.
+// This means we already have the +1, so all we need to do is invert the bits
+// of M, the data(!) therfore we can simply add, exactly the same way we did
+    //before
+    private byte SBC(){
+        fetch();
+
+        // Operating in 16-bit domain to capture carry out
+
+        // We can invert the bottom 8 bits with bitwise xor
+        char value = (char) (((char)fetched) ^ 0x00FF);
+
+        // Notice this is exactly the same as addition from here!
+        temp = (char) ((char)a + value + (char)GetFlag(FLAGS6502.C));
+        SetFlag(FLAGS6502.C, ((temp & 0xFF00) == 0) ? false : true);
+        SetFlag(FLAGS6502.Z, ((temp & 0x00FF) == 0));
+        SetFlag(FLAGS6502.V, (((temp ^ (char)a) & (temp ^ value) & 0x0080) == 0) ? false : true);
+        SetFlag(FLAGS6502.N, ((temp & 0x0080) == 0) ? false : true);
+        a = (byte) (temp & 0x00FF);
+        return 1;
+    }
+
+    // Instruction: Set Carry Flag
+// Function:    C = 1
+    private byte SEC(){
+        SetFlag(FLAGS6502.C, true);
+        return 0;
+    }
+
+    // Instruction: Set Decimal Flag
+// Function:    D = 1
+    private byte SED(){
+        SetFlag(FLAGS6502.D, true);
+        return 0;
+    }
+
+    // Instruction: Set Interrupt Flag / Enable Interrupts
+// Function:    I = 1
+    private byte SEI(){
+        SetFlag(FLAGS6502.I, true);
+        return 0;
+    }
+
+    // Instruction: Store Accumulator at Address
+// Function:    M = A
+    private byte STA(){
+        write(addr_abs, a);
+        return 0;
+    }
+
+    // Instruction: Store X Register at Address
+// Function:    M = X
+    private byte STX(){
+        write(addr_abs, x);
+        return 0;
+    }
+
+    // Instruction: Store Y Register at Address
+// Function:    M = Y
+    private byte STY(){
+        write(addr_abs, y);
+        return 0;
+    }
+
+    // Instruction: Transfer Accumulator to X Register
+// Function:    X = A
+// Flags Out:   N, Z
+    private byte TAX(){
+        x = a;
+        SetFlag(FLAGS6502.Z, x == 0x00);
+        SetFlag(FLAGS6502.N, ((x & 0x80) == 0) ? false : true);
+        return 0;
+    }
+
+    // Instruction: Transfer Accumulator to Y Register
+// Function:    Y = A
+// Flags Out:   N, Z
+    private byte TAY(){
+        y = a;
+        SetFlag(FLAGS6502.Z, y == 0x00);
+        SetFlag(FLAGS6502.N, ((y & 0x80) == 0) ? false : true);
+        return 0;
+    }
+
+    // Instruction: Transfer Stack Pointer to X Register
+// Function:    X = stack pointer
+// Flags Out:   N, Z
+    private byte TSX(){
+        x = stkp;
+        SetFlag(FLAGS6502.Z, x == 0x00);
+        SetFlag(FLAGS6502.N, ((x & 0x80) == 0) ? false : true);
+        return 0;
+    }
+
+    // Instruction: Transfer X Register to Accumulator
+// Function:    A = X
+// Flags Out:   N, Z
+    private byte TXA(){
+        a = x;
+        SetFlag(FLAGS6502.Z, a == 0x00);
+        SetFlag(FLAGS6502.N, ((a & 0x80) == 0) ? false : true);
+        return 0;
+    }
+
+    // Instruction: Transfer X Register to Stack Pointer
+// Function:    stack pointer = X
+    private byte TXS(){
+        stkp = x;
+        return 0;
+    }
+
+    // Instruction: Transfer Y Register to Accumulator
+// Function:    A = Y
+// Flags Out:   N, Z
+    private byte TYA(){
+        a = y;
+        SetFlag(FLAGS6502.Z, a == 0x00);
+        SetFlag(FLAGS6502.N, ((a & 0x80) == 0) ? false : true);
+        return 0;
+    }
 
     // I capture all "unofficial" opcodes with this function. It is
     // functionally identical to a NOP
-    private byte XXX();
+    private byte XXX(){
+        return 0;
+    }
 
 }
 
